@@ -125,30 +125,6 @@ PrimaryButtonConfig(
     ),
 )
 
-# 7. 自主充电控制
-PrimaryButtonConfig(
-    name="自主充电",
-    target=FormConfig(
-        title="自主充电",
-        url="/charge",
-        method="POST",
-        items={
-            "action": SelectFormItemConfig(
-                name="充电操作",
-                options={
-                    "query": "查询充电状态",
-                    "start": "开始充电",
-                    "stop": "结束充电",
-                    "reset": "重置充电任务",
-                },
-                default="query",
-            ),
-        },
-        submit=InnerButtonConfig(
-            target=ToastConfig(url="/charge", method="POST"), name="执行操作"
-        ),
-    ),
-)
 
 # 8. 对准姿态控制
 PrimaryButtonConfig(
@@ -174,26 +150,5 @@ PrimaryButtonConfig(
         ),
     ),
 )
-
-# 9. 速度精准控制
-PrimaryButtonConfig(
-    name="速度控制",
-    target=FormConfig(
-        title="速度控制",
-        url="/move/velocity",
-        method="POST",
-        items={
-            "x": NumberFormItemConfig(name="X轴速度(m/s)", min=-5, max=5, default=0),
-            "y": NumberFormItemConfig(name="Y轴速度(m/s)", min=-5, max=5, default=0),
-            "yaw": NumberFormItemConfig(
-                name="Yaw角速度(rad/s)", min=-3.14, max=3.14, default=0
-            ),
-        },
-        submit=InnerButtonConfig(
-            target=ToastConfig(url="/move/velocity", method="POST"), name="发送速度指令"
-        ),
-    ),
-)
-
 
 JoystickConfig(url="/move/joystick", method="POST")

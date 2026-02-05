@@ -22,7 +22,7 @@ class Controller(CallbackManager):
         self.v_max_lock = threading.Lock()
         self.basic_state = None
 
-    def move_raw(
+    def move_raw_old(
         self,
         x: Optional[float] = None,
         y: Optional[float] = None,
@@ -45,13 +45,44 @@ class Controller(CallbackManager):
             data = pack_q25_udp_cmd(CommandType.MOVE_YAW_AXIS, parameter_size=yaw)
             socketc.send_to_server(self, data)
 
+    def move_axis_no_dead_zone(
+        self,
+        left_x: int = 0,
+        left_y: int = 0,
+        right_x: int = 0,
+        right_y: int = 0,
+    ):
+        """【新无死区】三轴运动控制（推荐使用），机体左手坐标系FRU
+
+        :param left_x: X轴速度（-1000~1000，正向前）
+        :param left_y: Y轴速度（-1000~1000，正向左）
+        :param right_x: Yaw角速度（-1000~1000，正左转）
+        :param right_y: 预留（固定为0）
+        """
+        # 校验参数范围
+        left_x = max(-1000, min(1000, left_x))
+        left_y = max(-1000, min(1000, left_y))
+        right_x = max(-1000, min(1000, right_x))
+        right_y = 0  # 强制预留字段为0
+        axis_data = AxisCommand(
+            left_x=left_x, left_y=left_y, right_x=right_x, right_y=right_y
+        )
+
+        # 打包并发送指令（50Hz频率由调用方保证或新增线程控制）
+        data = pack_q25_udp_cmd(
+            command_type=CommandType.AXIS_COMMAND_NO_DEAD_ZONE,
+            parameter_size=len(axis_data.to_bytes()),
+            data=axis_data,
+        )
+        socketc.send_to_server(self, data)
+
     # ===================== 发送类指令（SOCKET监听）=====================
 
     @http.post("/takeoff")
     def takeoff(self):
         """起立"""
-        if self.basic_state in [1, 2, 3]:
-            return {"status": "error", "msg": "已经处于起立状态"}
+        if self.basic_state in [1, 2, 3, 0x10]:
+            return {"status": "error", "msg": "已经处于起立状态或L模式"}
         data = pack_q25_udp_cmd(CommandType.TOGGLE_STAND_DOWN)
         socketc.send_to_server(self, data)
         return {"status": "success", "msg": "切换为起立状态"}
@@ -62,7 +93,7 @@ class Controller(CallbackManager):
         return {"status": "success", "msg": {"arm": True}}
 
     @http.post("/land")
-    def takeoff(self):
+    def land(self):
         """趴下"""
         if self.basic_state in [0, 5]:
             return {"status": "error", "msg": "已经处于趴下状态"}
@@ -108,15 +139,16 @@ class Controller(CallbackManager):
         socketc.send_to_server(self, data)
         return {"status": "success", "msg": f"切换到{'导航' if is_nav else '手动'}模式"}
 
-    @http.post("/move/joystick")
-    def move_joystick(self, item: JoystickModel):
+    @http.post("/move/joystick_old")
+    def move_joystick_old(self, item: JoystickModel):
+        """摇杆控制"""
         x, y = item.x, item.y
         if x is not None:
             x = int(x * 32767)
         if y is not None:
             y = int(y * 32767)
 
-        self.move_raw(y, x, None)
+        self.move_raw_old(y, x, None)
         http.ws_send(
             self,
             dict(info=f"{x} {y}"),
@@ -124,18 +156,29 @@ class Controller(CallbackManager):
         )
         return {"status": "success", "msg": "OK"}
 
-    @http.post("/move/velocity")
-    def move_velocity(
+    @http.post("/move/joystick")
+    def move_joystick(self, item: JoystickModel):
+        """摇杆控制（推荐使用）"""
+        x, y = item.x, item.y
+        # 映射到[-1000,1000]范围
+        left_x = int(y * 1000)  # 左摇杆Y对应X轴速度
+        left_y = int(x * 1000)  # 左摇杆X对应Y轴速度
+        self.move_axis_no_dead_zone(left_x=left_x, left_y=left_y)
+        http.ws_send(
+            self,
+            dict(info=f"无死区控制：left_x={left_x}, left_y={left_y}"),
+            MessageType.INFO,
+        )
+        return {"status": "success", "msg": "OK"}
+
+    @http.post("/move/velocity_old")
+    def move_velocity_old(
         self,
         x: Optional[float] = None,
         y: Optional[float] = None,
         yaw: Optional[float] = None,
     ):
-        """三轴运动控制（X/Y轴速度 + Yaw角速度），机体左手坐标系FRU
-        :param x: X轴速度(m/s)
-        :param y: Y轴速度(m/s)
-        :param yaw: Yaw角速度(rad/s)
-        """
+        """三轴速度控制"""
         with self.v_max_lock:
             max_backward_vel = self.max_backward_vel
             max_forward_vel = self.max_forward_vel
@@ -155,8 +198,51 @@ class Controller(CallbackManager):
         if yaw is not None:
             _yaw = speed_to_cmd_value("yaw", yaw)
 
-        self.move_raw(_x, _y, _yaw)
+        self.move_raw_old(_x, _y, _yaw)
         return {"status": "success", "msg": f"运动控制：X={_x}, Y={_y}, Yaw={_yaw}"}
+
+    @http.post("/move/velocity")
+    def move_velocity(
+        self,
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        yaw: Optional[float] = None,
+    ):
+        """【新无死区】三轴速度控制（推荐使用）
+
+        :param x: X轴速度(m/s)
+        :param y: Y轴速度(m/s)
+        :param yaw: Yaw角速度(rad/s)
+        """
+
+        with self.v_max_lock:
+            max_backward_vel = self.max_backward_vel
+            max_forward_vel = self.max_forward_vel
+
+        if max_backward_vel is None or max_forward_vel is None:
+            return {"status": "error", "msg": f"未收到motion_state数据，无最大速度"}
+
+        # 线性映射到[-1000,1000]范围
+        left_x = 0
+        if x is not None:
+            v_max = max_forward_vel if x > 0 else max_backward_vel
+            left_x = int((x / v_max) * 1000) if v_max != 0 else 0
+
+        left_y = 0
+        if y is not None:
+            v_max = max_forward_vel if y > 0 else max_backward_vel
+            left_y = int((y / v_max) * 1000) if v_max != 0 else 0
+
+        right_x = 0
+        if yaw is not None:
+            # Yaw角速度映射（假设最大角速度对应1000）
+            right_x = int(yaw * 1000)
+
+        self.move_axis_no_dead_zone(left_x=left_x, left_y=left_y, right_x=right_x)
+        return {
+            "status": "success",
+            "msg": f"无死区运动控制：left_x={left_x}, left_y={left_y}, right_x={right_x}",
+        }
 
     @http.post("/platform-height")
     def set_platform_height(self, height: int = 2):
@@ -219,9 +305,9 @@ class Controller(CallbackManager):
     ):
         """对准姿态控制
         :param reset: True=重置对准，False=设置对准姿态
-        :param roll: 翻滚角（-1000~1000，对应-10°~10°）
-        :param pitch: 俯仰角（-1000~1000，对应-22°~22°）
-        :param yaw: 偏航角（-1000~1000，对应-22°~22°）
+        :param roll: 翻滚角（-1000~1000，无效字段）
+        :param pitch: 俯仰角（-1000~1000，对应-10°~17°）
+        :param yaw: 偏航角（-1000~1000，对应-20°~20°）
         """
         if reset:
             # 重置对准指令
@@ -249,23 +335,42 @@ class Controller(CallbackManager):
                 "msg": f"设置对准姿态：roll={roll}, pitch={pitch}, yaw={yaw}",
             }
 
-    @http.post("/charge")
-    def control_charge(self, action: str = "query"):
-        """自主充电控制
-        :param action: query=查询状态，start=开始充电，stop=结束充电，reset=重置任务
+    @http.post("/upper-power")
+    def control_upper_power(self, enable: bool = False):
+        """高级设置：上装上下电控制（文档3.1.11）
+        :param enable: True=上电，False=下电（默认）
         """
-        action_map = {
-            "start": (CommandType.CHARGE_REQUEST, 1),
-            "stop": (CommandType.CHARGE_REQUEST, 0),
-            "reset": (CommandType.CHARGE_REQUEST, 2),
-            "query": (CommandType.CHARGE_QUERY_STATUS, 0),
-        }
-        if action not in action_map:
-            return {"status": "error", "msg": "动作仅支持query/start/stop/reset"}
-        cmd_type, param = action_map[action]
-        data = pack_q25_udp_cmd(cmd_type, parameter_size=param)
+        data = pack_q25_udp_cmd(
+            CommandType.UPPER_POWER_SWITCH, parameter_size=1 if enable else 0
+        )
         socketc.send_to_server(self, data)
-        return {"status": "success", "msg": f"充电操作：{action}"}
+        return {
+            "status": "success",
+            "msg": f"上装{'上电' if enable else '下电'}成功（默认下电）",
+        }
+
+    @http.post("/data-report/switch")
+    def set_data_report_switch(
+        self, driver_joint_switch: int = 0, state_switch: int = 1
+    ):
+        """高级设置：数据上报开关控制（文档3.1.11）
+        :param driver_joint_switch: 驱动器及关节采样数据开关（0=关闭，1=开启，默认0）
+        :param state_switch: 状态数据开关（0=关闭，1=开启，默认1）
+        """
+        # 驱动器及关节采样数据开关（0x80110201）
+        data1 = pack_q25_udp_cmd(
+            CommandType.DRIVER_JOINT_DATA_SWITCH, parameter_size=driver_joint_switch
+        )
+        socketc.send_to_server(self, data1)
+        # 状态数据开关（0x80110202）
+        data2 = pack_q25_udp_cmd(
+            CommandType.STATE_DATA_SWITCH, parameter_size=state_switch
+        )
+        socketc.send_to_server(self, data2)
+        return {
+            "status": "success",
+            "msg": f"数据上报开关设置：驱动器关节采样={driver_joint_switch}，状态数据={state_switch}（需同时开启才上报传感器数据）",
+        }
 
     # ===================== 接收类指令（SOCKET监听）=====================
     @sockets.recv(CommandType.MOTION_STATE_REPORT)
@@ -277,10 +382,17 @@ class Controller(CallbackManager):
         with self.v_max_lock:
             self.max_forward_vel = data_obj.max_forward_vel
             self.max_backward_vel = data_obj.max_backward_vel
+        # 修正gait_desc判断（文档：0x20=行走，0x23=跑步）
+        gait_desc = "未知步态"
+        if data_obj.gait_state == 0x20:
+            gait_desc = "行走"
+        elif data_obj.gait_state == 0x23:
+            gait_desc = "跑步"
+
         _json_data = {
             "basic_state": data_obj.basic_state,
             "gait_state": data_obj.gait_state,
-            "gait_desc": "跑步" if data_obj.gait_state == 1 else "行走",
+            "gait_desc": gait_desc,
             "max_forward_vel": round(data_obj.max_forward_vel, 2),
             "max_backward_vel": round(data_obj.max_backward_vel, 2),
             "position": [
@@ -298,6 +410,7 @@ class Controller(CallbackManager):
             "charge_state": data_obj.auto_charge_state,
         }
 
+        # 补充basic_state=0x10（L模式）映射
         state_map = {
             0: "趴下状态",
             1: "正在起立状态",
@@ -306,8 +419,11 @@ class Controller(CallbackManager):
             4: "踏步状态",
             5: "正在趴下状态",
             6: "软急停/摔倒状态",
+            0x10: "L模式",
         }
-        basic_state_desc = state_map.get(data_obj.basic_state, f"未知状态({self.name})")
+        basic_state_desc = state_map.get(
+            data_obj.basic_state, f"未知状态({data_obj.basic_state})"
+        )
         self.basic_state = data_obj.basic_state
         http.ws_send(self, dict(basic_state_desc=basic_state_desc), MessageType.STATE)
 
@@ -318,7 +434,6 @@ class Controller(CallbackManager):
         if not isinstance(data_obj, RcsData):
             return
         json_data = {
-            # "type": "run_status",
             "robot_name": data_obj.robot_name,
             "current_milege": data_obj.current_milege,
             "total_milege": data_obj.total_milege,
@@ -374,10 +489,9 @@ class Controller(CallbackManager):
     def controller_safe_report(self, data: bytes):
         """接收运动控制系统数据（1Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
-        if not isinstance(data_obj, Q20ControllerSafeData):
+        if not isinstance(data_obj, ControllerSafeData):
             return
         json_data = {
-            # "type": "safe_data",
             "motor_temperatures": [
                 round(temp, 1) for temp in data_obj.motor_temperatures
             ],
@@ -423,19 +537,6 @@ class Controller(CallbackManager):
             "level_desc": level_desc.get(data_obj.error_level, "未知"),
             "error_code": hex(data_obj.error_code),
             "error_msg": data_obj.error_msg,
-        }
-        http.ws_send(self, json_data, MessageType.STATE)
-
-    @sockets.recv(CommandType.CHARGE_REQUEST)
-    @sockets.recv(CommandType.CHARGE_QUERY_STATUS)
-    def charge_response_report(self, data: bytes):
-        """接收充电响应数据"""
-        _, data_obj = unpack_q25_udp_cmd(data)
-        if not isinstance(data_obj, ChargeResponse):
-            return
-        json_data = {
-            "state_code": hex(data_obj.state),
-            "state_msg": data_obj.state_msg,
         }
         http.ws_send(self, json_data, MessageType.STATE)
 
