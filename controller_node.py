@@ -55,7 +55,12 @@ class Controller(CallbackManager):
         data = pack_q25_udp_cmd(CommandType.TOGGLE_STAND_DOWN)
         socketc.send_to_server(self, data)
         return {"status": "success", "msg": "切换为起立状态"}
-    
+
+    @http.get("/prearms")
+    def prearms(self):
+        """检查起飞状态"""
+        return {"status": "success", "msg": {"arm": True}}
+
     @http.post("/land")
     def takeoff(self):
         """趴下"""
@@ -482,6 +487,8 @@ if __name__ == "__main__":
     host = "192.168.3.20"  # 实际机器人IP（无线接入）
     # host = "192.168.1.103"  # 有线接入IP
     # host = "192.168.2.103"  # 通讯接口IP
+    server_host = "192.168.3.157"
+    server_port = 43893
 
     def router(data: bytes):
         """路由函数：解析指令码并返回对应的CommandType"""
@@ -496,7 +503,7 @@ if __name__ == "__main__":
     config = [
         sockets.config(
             host="0.0.0.0",
-            port=6000,
+            port=server_port,
             socket_type="udp",
             register=False,
             decode=False,
