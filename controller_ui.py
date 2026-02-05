@@ -32,6 +32,16 @@ StatusConfig(config_id="level_desc", name="错误等级")
 StatusConfig(config_id="error_msg", name="错误详情")
 
 # ===================== 核心操作按钮配置 =====================
+PrimaryButtonConfig(
+    name="站立",
+    target=ToastConfig(url="/takeoff", method="POST"),
+)
+
+PrimaryButtonConfig(
+    name="趴下",
+    target=ToastConfig(url="/land", method="POST"),
+)
+
 # 1. 基础姿态控制（站立/趴下）
 PrimaryButtonConfig(
     name="站立/趴下",

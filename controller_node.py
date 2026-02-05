@@ -20,6 +20,7 @@ class Controller(CallbackManager):
         self.max_backward_vel = None
         self.max_forward_vel = None
         self.v_max_lock = threading.Lock()
+        self.basic_state = None
 
     def move_raw(
         self,
@@ -45,6 +46,24 @@ class Controller(CallbackManager):
             socketc.send_to_server(self, data)
 
     # ===================== 发送类指令（SOCKET监听）=====================
+
+    @http.post("/takeoff")
+    def takeoff(self):
+        """起立"""
+        if self.basic_state in [1, 2, 3]:
+            return {"status": "error", "msg": "已经处于起立状态"}
+        data = pack_q25_udp_cmd(CommandType.TOGGLE_STAND_DOWN)
+        socketc.send_to_server(self, data)
+        return {"status": "success", "msg": "切换为起立状态"}
+    
+    @http.post("/land")
+    def takeoff(self):
+        """趴下"""
+        if self.basic_state in [0, 5]:
+            return {"status": "error", "msg": "已经处于趴下状态"}
+        data = pack_q25_udp_cmd(CommandType.TOGGLE_STAND_DOWN)
+        socketc.send_to_server(self, data)
+        return {"status": "success", "msg": "切换为趴下状态"}
 
     @http.post("/toggle_stand_down")
     def pose_toggle_stand_down(self):
@@ -86,17 +105,16 @@ class Controller(CallbackManager):
 
     @http.post("/move/joystick")
     def move_joystick(self, item: JoystickModel):
-        x, y, yaw = item.x, item.y, item.yaw
+        x, y = item.x, item.y
         if x is not None:
             x = int(x * 32767)
         if y is not None:
             y = int(y * 32767)
-        if yaw is not None:
-            yaw = int(yaw * 32767)
-        self.move_raw(x, y, yaw)
+
+        self.move_raw(y, x, None)
         http.ws_send(
             self,
-            dict(info=f"{x} {y} {yaw}"),
+            dict(info=f"{x} {y}"),
             MessageType.INFO,
         )
         return {"status": "success", "msg": "OK"}
@@ -285,6 +303,7 @@ class Controller(CallbackManager):
             6: "软急停/摔倒状态",
         }
         basic_state_desc = state_map.get(data_obj.basic_state, f"未知状态({self.name})")
+        self.basic_state = data_obj.basic_state
         http.ws_send(self, dict(basic_state_desc=basic_state_desc), MessageType.STATE)
 
     @sockets.recv(CommandType.RUN_STATUS_REPORT)
@@ -459,8 +478,8 @@ class Controller(CallbackManager):
 
 
 if __name__ == "__main__":
-    host = "localhost"
-    # host = "192.168.3.20"  # 实际机器人IP（无线接入）
+    # host = "localhost"
+    host = "192.168.3.20"  # 实际机器人IP（无线接入）
     # host = "192.168.1.103"  # 有线接入IP
     # host = "192.168.2.103"  # 通讯接口IP
 
