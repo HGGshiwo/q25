@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from event_callback.components.http.message_handler import MessageType
-from controller_model import JoystickModel
+from controller_model import GaitModel, JoystickModel, PlatformHeightModel
 from controller_ui import *
 from utils.utils import *
 from event_callback.components.socket import socketc, sockets
@@ -16,11 +16,13 @@ from event_callback import CallbackManager
 
 class Controller(CallbackManager):
     def __init__(self, component_config=None):
-        super().__init__(component_config)
         self.max_backward_vel = None
         self.max_forward_vel = None
         self.v_max_lock = threading.Lock()
         self.basic_state = None
+        self.is_run = None  # 是否是跑步步态
+        self.paltform_height = None  # 0 匍匐, 2 站立, 无法从上报状态读出
+        super().__init__(component_config)
 
     def move_raw_old(
         self,
@@ -52,7 +54,8 @@ class Controller(CallbackManager):
         right_x: int = 0,
         right_y: int = 0,
     ):
-        """【新无死区】三轴运动控制（推荐使用），机体左手坐标系FRU
+        """【新无死区】三轴运动控制（推荐使用），机体左手坐标系FRU，
+        注意这个API的xy是相反的，和文档不一样
 
         :param left_x: X轴速度（-1000~1000，正向前）
         :param left_y: Y轴速度（-1000~1000，正向左）
@@ -60,6 +63,7 @@ class Controller(CallbackManager):
         :param right_y: 预留（固定为0）
         """
         # 校验参数范围
+        left_x, left_y = left_y, left_x
         left_x = max(-1000, min(1000, left_x))
         left_y = max(-1000, min(1000, left_y))
         right_x = max(-1000, min(1000, right_x))
@@ -244,29 +248,44 @@ class Controller(CallbackManager):
             "msg": f"无死区运动控制：left_x={left_x}, left_y={left_y}, right_x={right_x}",
         }
 
+    @http.get("/platform-height")
+    def get_platform_height(self):
+        return {"status": "success", "msg": {"height": str(self.paltform_height)}}
+
     @http.post("/platform-height")
-    def set_platform_height(self, height: int = 2):
+    def set_platform_height(self, item: PlatformHeightModel):
         """切换平台高度
         :param height: 0=匍匐高度，2=正常高度（仅支持这两个值）
         """
-        if height not in [0, 2]:
+        if item.height not in [0, 2]:
             return {"status": "error", "msg": "高度参数仅支持0（匍匐）或2（正常）"}
-        data = pack_q25_udp_cmd(CommandType.SET_PLATFORM_HEIGHT, parameter_size=height)
+        data = pack_q25_udp_cmd(
+            CommandType.SET_PLATFORM_HEIGHT, parameter_size=item.height
+        )
         socketc.send_to_server(self, data)
+        self.paltform_height = item.height 
         return {
             "status": "success",
-            "msg": f"切换平台高度为{'匍匐' if height == 0 else '正常'}",
+            "msg": f"切换平台高度为{'匍匐' if item.height == 0 else '正常'}",
         }
 
+    @http.get("/gait")
+    def get_gait(self):
+        """获取步态"""
+        return {"status": "success", "msg": {"is_run": self.is_run}}
+
     @http.post("/gait")
-    def set_gait(self, is_run: bool = False):
+    def set_gait(self, item: GaitModel):
         """切换步态
         :param is_run: True=跑步步态，False=行走步态
         """
-        cmd_type = CommandType.GAIT_RUN if is_run else CommandType.GAIT_WALK
+        cmd_type = CommandType.GAIT_RUN if item.is_run else CommandType.GAIT_WALK
         data = pack_q25_udp_cmd(cmd_type)
         socketc.send_to_server(self, data)
-        return {"status": "success", "msg": f"切换到{'跑步' if is_run else '行走'}步态"}
+        return {
+            "status": "success",
+            "msg": f"切换到{'跑步' if item.is_run else '行走'}步态",
+        }
 
     @http.post("/speed-gear")
     def switch_speed_gear(self, is_high: bool = False):
@@ -373,7 +392,7 @@ class Controller(CallbackManager):
         }
 
     # ===================== 接收类指令（SOCKET监听）=====================
-    @sockets.recv(CommandType.MOTION_STATE_REPORT)
+    @sockets.recv(CommandType.MOTION_STATE_REPORT, frequency=1)
     def motion_state_report(self, data: bytes):
         """接收运动状态数据（200Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -425,9 +444,19 @@ class Controller(CallbackManager):
             data_obj.basic_state, f"未知状态({data_obj.basic_state})"
         )
         self.basic_state = data_obj.basic_state
-        http.ws_send(self, dict(basic_state_desc=basic_state_desc), MessageType.STATE)
+        self.is_run = data_obj.gait_state == 0x23
+        http.ws_send(
+            self,
+            dict(
+                basic_state_desc=basic_state_desc,
+                gait_desc=gait_desc,
+                max_forward_vel=data_obj.max_forward_vel,
+                max_backward_vel=data_obj.max_backward_vel,
+            ),
+            MessageType.STATE,
+        )
 
-    @sockets.recv(CommandType.RUN_STATUS_REPORT)
+    @sockets.recv(CommandType.RUN_STATUS_REPORT, frequency=1)
     def run_status_report(self, data: bytes):
         """接收运行状态数据（200Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -457,7 +486,7 @@ class Controller(CallbackManager):
         }
         http.ws_send(self, json_data, MessageType.STATE)
 
-    @sockets.recv(CommandType.SENSOR_DATA_REPORT)
+    @sockets.recv(CommandType.SENSOR_DATA_REPORT, frequency=10)
     def sensor_data_report(self, data: bytes):
         """接收运动控制传感器数据（200Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -485,7 +514,7 @@ class Controller(CallbackManager):
         }
         # http.ws_send(self, json_data, MessageType.STATE)
 
-    @sockets.recv(CommandType.CONTROLLER_SAFE_DATA_REPORT)
+    @sockets.recv(CommandType.CONTROLLER_SAFE_DATA_REPORT, frequency=1)
     def controller_safe_report(self, data: bytes):
         """接收运动控制系统数据（1Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -503,7 +532,7 @@ class Controller(CallbackManager):
         }
         http.ws_send(self, json_data, MessageType.STATE)
 
-    @sockets.recv(CommandType.BATTERY_LEVEL_REPORT)
+    @sockets.recv(CommandType.BATTERY_LEVEL_REPORT, frequency=10)
     def battery_level_report(self, data: bytes):
         """接收电池电量数据（0.5Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -512,7 +541,7 @@ class Controller(CallbackManager):
         json_data = {"type": "battery_level", "level": data_obj.level}
         http.ws_send(self, json_data, MessageType.STATE)
 
-    @sockets.recv(CommandType.BATTERY_CHARGE_STATE_REPORT)
+    @sockets.recv(CommandType.BATTERY_CHARGE_STATE_REPORT, frequency=10)
     def battery_charge_report(self, data: bytes):
         """接收电池充电状态数据（0.5Hz）"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -525,7 +554,7 @@ class Controller(CallbackManager):
         }
         http.ws_send(self, json_data, MessageType.STATE)
 
-    @sockets.recv(CommandType.ERROR_CODE_REPORT)
+    @sockets.recv(CommandType.ERROR_CODE_REPORT, frequency=10)
     def error_code_report(self, data: bytes):
         """接收错误码数据"""
         _, data_obj = unpack_q25_udp_cmd(data)
@@ -588,7 +617,8 @@ if __name__ == "__main__":
     host = "192.168.3.20"  # 实际机器人IP（无线接入）
     # host = "192.168.1.103"  # 有线接入IP
     # host = "192.168.2.103"  # 通讯接口IP
-    server_host = "192.168.3.157"
+    # server_host = "192.168.3.157"
+    server_host = "localhost"
     server_port = 43893
 
     def router(data: bytes):
@@ -597,7 +627,7 @@ if __name__ == "__main__":
             command_id = struct.unpack("<I", data[0:4])[0]
             return CommandType(command_id)
         except Exception as e:
-            print(f"指令解析失败！data: {data.hex()}, error: {e}")
+            print(f"指令解析失败！data: 0x{data.hex()}, error: {e}")
             return None
 
     # 组件配置

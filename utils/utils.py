@@ -4,6 +4,8 @@ from typing import Optional, Union, List, Dict, Any
 from dataclasses import dataclass
 import ctypes
 
+from event_callback.utils import classproperty
+
 
 def to_uint32(data):
     data = int(data)
@@ -92,6 +94,12 @@ command_info_map: Dict[CommandType, tuple[str, int, str]] = {
 
 # -------------------------- 数据结构类 --------------------------
 @dataclass
+class BaseCommand:
+    @classproperty
+    def fmt_size(cls) -> int:
+        return struct.calcsize(cls.fmt)
+
+@dataclass
 class CommandHead:
     """指令头部（12字节）"""
 
@@ -161,10 +169,10 @@ class AxisCommand:
 
 
 @dataclass
-class ImuSensorData:
+class ImuSensorData(BaseCommand):
     """IMU传感器数据（40字节）"""
 
-    fmt = "<<i9f"  # 公共打包格式
+    fmt = "<i9f"  # 公共打包格式
     timestamp: int  # int32_t
     roll: float  # 翻滚角（°）
     pitch: float  # 俯仰角（°）
@@ -208,10 +216,11 @@ class ImuSensorData:
             acc_y=unpacked[8],
             acc_z=unpacked[9],
         )
+    
 
 
 @dataclass
-class LegJointData:
+class LegJointData(BaseCommand):
     """关节数据（48字节）"""
 
     fmt = "<12f"  # 公共打包格式
@@ -374,9 +383,9 @@ class RcsData:
 class MotionStateData:
     """运动状态数据（56字节）"""
 
-    fmt = "<2Bff3f3fII10B"  # 公共打包格式
+    fmt = "<2Bff3f3ffII10B"  # 公共打包格式
     # basic_state取值：0=趴下,1=起立中,2=初始站立,3=力控站立,4=踏步,5=趴下中,6=急停/摔倒,0x10=L模式
-    basic_state: int
+    basic_state: int                            ;' '
     # gait_state取值：0x20=行走,0x23=跑步
     gait_state: int
     max_forward_vel: float  # 最大前进速度（m/s）

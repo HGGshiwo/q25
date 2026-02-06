@@ -369,6 +369,7 @@ def pack_report_data(cmd_enum: CommandType, state: Q25RobotState) -> bytes:
         elif cmd_enum == CommandType.MOTION_STATE_REPORT:
             # 运动状态数据上报（200Hz）
             motion_data = MotionStateData(
+                touch_state=0,
                 basic_state=state.basic_state,
                 gait_state=state.gait_state,
                 max_forward_vel=state.max_forward_vel,
@@ -451,7 +452,7 @@ def pack_report_data(cmd_enum: CommandType, state: Q25RobotState) -> bytes:
 
         elif cmd_enum == CommandType.CONTROLLER_SAFE_DATA_REPORT:
             # 运动控制系统数据上报（1Hz）
-            safe_data = Q20ControllerSafeData(
+            safe_data = ControllerSafeData(
                 motor_temperatures=state.motor_temps,
                 driver_temperatures=[to_uint32(t) for t in state.driver_temps],
                 cpu_info=CpuInfo(
@@ -522,7 +523,7 @@ class Q25UDPServer:
         """启动状态上报线程"""
         # 定义上报任务：（指令类型，上报频率Hz）
         report_tasks = [
-            (CommandType.RUN_STATUS_REPORT, 1),
+            (CommandType.RUN_STATUS_REPORT, 200),
             (CommandType.MOTION_STATE_REPORT, 1),
             (CommandType.SENSOR_DATA_REPORT, 1),
             (CommandType.CONTROLLER_SAFE_DATA_REPORT, 1),
@@ -603,21 +604,21 @@ class Q25UDPServer:
         )
 
         # 生成响应
-        if cmd_enum in [CommandType.CHARGE_REQUEST, CommandType.CHARGE_QUERY_STATUS]:
-            # 充电指令响应
-            response = ChargeResponse(
-                state=self.robot_state.charge_state, state_msg=""
-            ).to_bytes()
-        else:
-            # 普通指令响应
-            response = struct.pack(
-                "<III", SUCCESS_CODE if success else FAIL_CODE, cmd_enum.value, 0
-            )
+        # if cmd_enum in [CommandType.CHARGE_REQUEST, CommandType.CHARGE_QUERY_STATUS]:
+        #     # 充电指令响应
+        #     response = ChargeResponse(
+        #         state=self.robot_state.charge_state, state_msg=""
+        #     ).to_bytes()
+        # else:
+        #     # 普通指令响应
+        #     response = struct.pack(
+        #         "<III", SUCCESS_CODE if success else FAIL_CODE, cmd_enum.value, 0
+        #     )
 
-        self.socket.sendto(response, addr)
-        resp_status = "成功" if success else "失败"
-        print(f"📤  发送{resp_status}响应：{response.hex()}")
-        print(f"{'='*80}\n")
+        # self.socket.sendto(response, addr)
+        # resp_status = "成功" if success else "失败"
+        # print(f"📤  发送{resp_status}响应：{response.hex()}")
+        # print(f"{'='*80}\n")
 
     def start(self):
         """启动服务器"""
@@ -665,7 +666,7 @@ SERVER_PORT = 43893  # 文档默认UDP指令端口
 BUFFER_SIZE = 4096  # 接收缓冲区大小（适配最大指令包）
 
 REPORT_HOST = "localhost"  # 数据上报的host
-REPORT_PORT = 6000  # 数据上报的端口
+REPORT_PORT = 43893  # 数据上报的端口
 
 HEADER_LENGTH = 12  # 指令头长度（固定12字节）
 SUCCESS_CODE = 0  # 成功响应码

@@ -4,6 +4,7 @@ from event_callback.components.http.ui_config import (
     PrimaryButtonConfig,
     FormConfig,
     SwitchFormItemConfig,
+    RadioFormItemConfig,
     SliderFormItemConfig,
     InputFormItemConfig,
     NumberFormItemConfig,
@@ -70,31 +71,15 @@ PrimaryButtonConfig(
     ),
 )
 
-# 4. 运动模式切换（导航/手动）
-PrimaryButtonConfig(
-    name="运动模式",
-    target=FormConfig(
-        title="运动模式",
-        url="/motion-mode",
-        method="POST",
-        items={
-            "is_nav": SwitchFormItemConfig(name="是否切换为导航模式", default=False),
-        },
-        submit=InnerButtonConfig(
-            target=ToastConfig(url="/motion-mode", method="POST"), name="确认切换"
-        ),
-    ),
-)
-
 # 5. 平台高度切换（匍匐/正常）
 PrimaryButtonConfig(
     name="平台高度",
     target=FormConfig(
         title="平台高度",
         url="/platform-height",
-        method="POST",
+        method="GET",
         items={
-            "height": SelectFormItemConfig(
+            "height": RadioFormItemConfig(
                 name="平台高度",
                 options={
                     "0": "匍匐高度",
@@ -115,9 +100,9 @@ PrimaryButtonConfig(
     target=FormConfig(
         title="切换步态",
         url="/gait",
-        method="POST",
+        method="GET",
         items={
-            "is_run": SwitchFormItemConfig(name="是否切换为跑步步态", default=False),
+            "is_run": SwitchFormItemConfig(name="跑步步态", default=False),
         },
         submit=InnerButtonConfig(
             target=ToastConfig(url="/gait", method="POST"), name="确认切换"
