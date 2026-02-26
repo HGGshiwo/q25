@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class TestModel(BaseModel):
     test_switch: bool
     test_slider: float

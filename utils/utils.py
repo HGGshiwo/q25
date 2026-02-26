@@ -99,6 +99,7 @@ class BaseCommand:
     def fmt_size(cls) -> int:
         return struct.calcsize(cls.fmt)
 
+
 @dataclass
 class CommandHead:
     """指令头部（12字节）"""
@@ -216,7 +217,6 @@ class ImuSensorData(BaseCommand):
             acc_y=unpacked[8],
             acc_z=unpacked[9],
         )
-    
 
 
 @dataclass
@@ -385,7 +385,8 @@ class MotionStateData:
 
     fmt = "<2Bff3f3ffII10B"  # 公共打包格式
     # basic_state取值：0=趴下,1=起立中,2=初始站立,3=力控站立,4=踏步,5=趴下中,6=急停/摔倒,0x10=L模式
-    basic_state: int                            ;' '
+    basic_state: int
+    " "
     # gait_state取值：0x20=行走,0x23=跑步
     gait_state: int
     max_forward_vel: float  # 最大前进速度（m/s）

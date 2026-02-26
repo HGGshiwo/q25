@@ -5,13 +5,24 @@ import threading
 import time
 from typing import Optional
 
+from event_callback.components.http.core import HTTPConfig
 from event_callback.components.http.message_handler import MessageType
+from event_callback.utils import setup_logger
 from controller_model import GaitModel, JoystickModel, PlatformHeightModel
 from controller_ui import *
 from utils.utils import *
-from event_callback.components.socket import socketc, sockets
+from event_callback.components.socket import (
+    SocketClientConfig,
+    SocketServerConfig,
+    socketc,
+    sockets,
+)
 from event_callback import http
 from event_callback import CallbackManager
+from logging import getLogger
+
+logger = getLogger(__file__)
+setup_logger()
 
 
 class Controller(CallbackManager):
@@ -263,7 +274,7 @@ class Controller(CallbackManager):
             CommandType.SET_PLATFORM_HEIGHT, parameter_size=item.height
         )
         socketc.send_to_server(self, data)
-        self.paltform_height = item.height 
+        self.paltform_height = item.height
         return {
             "status": "success",
             "msg": f"切换平台高度为{'匍匐' if item.height == 0 else '正常'}",
@@ -632,7 +643,7 @@ if __name__ == "__main__":
 
     # 组件配置
     config = [
-        sockets.config(
+        SocketServerConfig(
             host="0.0.0.0",
             port=server_port,
             socket_type="udp",
@@ -640,7 +651,7 @@ if __name__ == "__main__":
             decode=False,
             router=router,
         ),
-        socketc.config(
+        SocketClientConfig(
             host=host,
             port=43893,
             register=False,
@@ -648,7 +659,7 @@ if __name__ == "__main__":
             decode=False,
             router=router,
         ),
-        http.config(port=8001),
+        HTTPConfig(port=8001),
     ]
 
     # 启动控制器
@@ -661,11 +672,11 @@ if __name__ == "__main__":
         name="heartbeat-thread",
     )
     heartbeat_t.start()
-    print("心跳线程已启动（2Hz）")
+    logger.info("心跳线程已启动（2Hz）")
 
     # 主循环
     try:
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
-        print("\n程序正在退出...")
+        logger.info("\n程序正在退出...")
